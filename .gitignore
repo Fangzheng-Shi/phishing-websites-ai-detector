@@ -1,1 +1,19 @@
 raw_data/
+# macOS
+.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+
+# virtual env
+phishing-env/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+
+# logs
+*.log
