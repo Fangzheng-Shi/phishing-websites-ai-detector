@@ -63,7 +63,7 @@ def get_class(prob):
     print(prob)
 
     # Increase the threshold to avoid safe websites to be warned
-    if prob >= 0.99:
+    if prob >= 0.999:
         return 'PHISHING'
     else:
         return 'LEGITIMATE'
@@ -82,7 +82,7 @@ def check_url():
     decision = get_class(probability)
 
     # return the score to the console
-    return jsonify({"decision": decision, "score": float(probability)}})
+    return jsonify({"decision": decision, "score": float(probability)})
 
 if __name__ == '__main__':
     # Bind to PORT if defined, otherwise default to 5000.
