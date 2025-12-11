@@ -13,27 +13,27 @@ function promptReasonFromURL(href) {
 
     if (full.length > 80) {
       reasons.push(
-        "This link’s web address is unusually long. Fake sites often use very long addresses to hide small changes."
+        "This link’s web address is unusually long. Fake sites often use long addresses to hide small changes."
       );
     }
 
     const subdomainCount = hostname.split(".").length - 1;
     if (subdomainCount >= 3) {
       reasons.push(
-        "This web address has many extra parts in front of the main site name. Legitimate sites usually keep their address simple."
+        "This address has many extra parts in front of the main site name. Legitimate sites usually keep it simple."
       );
     }
 
     const digitCount = (hostname.match(/\d/g) || []).length;
     if (digitCount >= 3) {
       reasons.push(
-        "This web address contains a lot of numbers that don’t look like part of a normal brand name."
+        "This address contains a lot of numbers that don’t look like part of a normal brand name."
       );
     }
 
     if (/[!@%$]/.test(full)) {
       reasons.push(
-        "This web address includes unusual symbols. Real sites rarely put these symbols in their main address."
+        "This address includes unusual symbols. Real sites rarely put these symbols in their main address."
       );
     }
 
@@ -44,7 +44,7 @@ function promptReasonFromURL(href) {
     }
 
     if (reasons.length === 0) {
-      return "This web address looks different from what we usually see on well-known, legitimate sites.";
+      return "This web address looks unusual compared with typical safe websites.";
     }
     // Only use the first reason to keep the message short.
     return reasons[0];
@@ -56,9 +56,7 @@ function promptReasonFromURL(href) {
 
 // Create or update the inline warning bubble near a link.
 function showPhishingBubble(link, score, reason) {
-  const existing = link._phishingBubble;
-
-  let bubble = existing;
+  let bubble = link._phishingBubble;
   if (!bubble) {
     bubble = document.createElement("div");
     bubble.style.position = "absolute";
@@ -76,7 +74,7 @@ function showPhishingBubble(link, score, reason) {
     link._phishingBubble = bubble;
   }
 
-  // change the score like 0.98 into percentage
+  // e.g. 0.998 -> 100%
   let percentText = "";
   if (typeof score === "number") {
     const pct = Math.round(score * 100);
@@ -148,6 +146,11 @@ function requestCheck(link, rawUrl, source) {
       },
       (response) => {
         if (!response) return;
+
+        if (response.decision === "DISABLED") {
+            return;
+        }
+
         const decision = response.decision || "ERROR";
         const score = response.score;
         const reason = promptReasonFromURL(href);
@@ -163,3 +166,134 @@ function requestCheck(link, rawUrl, source) {
     console.error("requestCheck error:", e);
   }
 }
+
+// full-page overlay for navigation detection
+let pageOverlay = null;
+
+function showPageOverlay(text = "Checking if this page is safe...") {
+  if (pageOverlay) {
+    pageOverlay.querySelector(".np-overlay-text").textContent = text;
+    pageOverlay.style.display = "flex";
+    return;
+  }
+
+  const overlay = document.createElement("div");
+  overlay.id = "np-page-overlay";
+  overlay.style.position = "fixed";
+  overlay.style.top = "0";
+  overlay.style.left = "0";
+  overlay.style.width = "100%";
+  overlay.style.height = "100%";
+  overlay.style.background = "rgba(0,0,0,0.45)";
+  overlay.style.zIndex = "999998";
+  overlay.style.display = "flex";
+  overlay.style.alignItems = "center";
+  overlay.style.justifyContent = "center";
+  overlay.style.color = "#fff";
+  overlay.style.fontSize = "18px";
+  overlay.style.backdropFilter = "blur(2px)";
+
+  overlay.innerHTML = `
+    <div style="text-align:center;">
+      <div class="np-spinner"
+           style="
+             width:32px;height:32px;
+             border-radius:50%;
+             border:3px solid #fff;
+             border-top-color:transparent;
+             margin:0 auto 12px auto;
+             animation: np-spin 0.8s linear infinite;">
+      </div>
+      <div class="np-overlay-text">${text}</div>
+    </div>
+  `;
+
+  const style = document.createElement("style");
+  style.textContent = `
+    @keyframes np-spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+  `;
+  document.head.appendChild(style);
+
+  document.body.appendChild(overlay);
+  pageOverlay = overlay;
+}
+
+function hidePageOverlay() {
+  if (pageOverlay) {
+    pageOverlay.style.display = "none";
+  }
+}
+
+// hover / mouseout / click listeners
+// When the mouse hovers over a link for 300 ms, trigger detection.
+document.addEventListener("mouseover", (event) => {
+  const link = event.target.closest("a[href]");
+  if (!link) return;
+
+  const href = link.href;
+  if (!href || href.startsWith("javascript:")) return;
+
+  if (hoverTimers.has(link)) return;
+
+  const timerId = setTimeout(() => {
+    hoverTimers.delete(link);
+    requestCheck(link, href, "hover");
+  }, 300);
+
+  hoverTimers.set(link, timerId);
+});
+
+// Cancel the timer and hide the bubble when the mouse leaves.
+document.addEventListener("mouseout", (event) => {
+  const link = event.target.closest("a[href]");
+  if (!link) return;
+
+  const timerId = hoverTimers.get(link);
+  if (timerId) {
+    clearTimeout(timerId);
+    hoverTimers.delete(link);
+  }
+  hidePhishingBubble(link);
+});
+
+// On click, send another detection request (for logging/comparison)
+// without blocking navigation (for now).
+document.addEventListener("click", (event) => {
+  const link = event.target.closest("a[href]");
+  if (!link) return;
+
+  const href = link.href;
+  if (!href || href.startsWith("javascript:")) return;
+
+  const cached = cachedResults.get(href);
+  if (cached && cached.decision === "PHISHING") {
+    // For now we let navigation + full warning handle it.
+    // event.preventDefault();
+  }
+
+  requestCheck(link, href, "click");
+});
+
+// Receive page-level detection messages from background.js.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.action === "pageCheckStart") {
+    // Only affect the top-level page, not iframes.
+    if (window.top === window) {
+      showPageOverlay();
+    }
+  }
+
+  if (msg.action === "pageCheckResult") {
+    if (window.top === window) {
+      if (msg.decision === "PHISHING") {
+        showPageOverlay("This page looks dangerous, redirecting to warning...");
+      } else {
+        // Hide the overlay when the URL is SAFE or ERROR.
+        hidePageOverlay();
+      }
+    }
+  }
+});

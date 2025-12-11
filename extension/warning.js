@@ -19,12 +19,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (goBackBtn) {
     goBackBtn.addEventListener("click", () => {
-      if (window.history.length > 1) {
-        window.history.back();
-      } else {
-        // if no history go to a default google search page
-        window.location.href = "https://www.google.com";
-      }
+      window.location.href = "https://www.google.com";
     });
   }
 });

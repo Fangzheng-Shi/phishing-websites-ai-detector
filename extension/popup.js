@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', function() {
   // Send the updated state to the background script
   toggleSwitch.addEventListener('change', function() {
     const isEnabled = this.checked;
+    chrome.storage.sync.set({ isEnabled });
     // Send message to background script to update the state
     chrome.runtime.sendMessage({ action: "updateState", state: isEnabled });
   });
