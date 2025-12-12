@@ -63,7 +63,7 @@ def get_class(prob):
     print(prob)
 
     # Increase the threshold to avoid safe websites to be warned
-    if prob >= 0.999:
+    if prob >= 0.5:
         return 'PHISHING'
     else:
         return 'LEGITIMATE'
