@@ -46,13 +46,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     chrome.storage.sync.set({ isEnabled: request.state });
   }
 
-  // if (request.action === "proceedToURL") {
-  //   // users click "proceed to URL" in the warning page
-  //   proceedURLs.add(request.url);
-  //   if (sender && sender.tab) {
-  //     chrome.tabs.update(sender.tab.id, { url: request.url });
-  //   }
-  // }
   if (request.action === "proceedToURL") {
     try {
       const u = new URL(request.url);
@@ -113,6 +106,44 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Asynchronous call to sendResponse
     return true;
   }
+
+  // asks whether a navigation overlay should be displayed when the content.js is put in page
+  if (request.action === "navOverlayInit") {
+    chrome.storage.sync.get("isEnabled", (data) => {
+      if (!data.isEnabled) {
+        sendResponse({ shouldShow: false });
+        return;
+      }
+  
+      let urlObj;
+      try {
+        urlObj = new URL(request.url);
+      } catch (e) {
+        console.error("Invalid URL in navOverlayInit:", request.url, e);
+        sendResponse({ shouldShow: false });
+        return;
+      }
+
+      if (request.url.startsWith(chrome.runtime.getURL("extension/warning.html"))) {
+        sendResponse({ shouldShow: false });
+        return;
+      }
+  
+      if (proceedURLs.has(request.url) || proceedHosts.has(urlObj.hostname)) {
+        sendResponse({ shouldShow: false });
+        return;
+      }
+
+      if (isSafeDomain(urlObj.hostname)) {
+        sendResponse({ shouldShow: false });
+        return;
+      }
+  
+      sendResponse({ shouldShow: true });
+    });
+  
+    return true;
+  }  
 });
 
 // communicate with Flask backend and simple caching
@@ -153,86 +184,15 @@ function checkUrlWithBackend(url) {
 }
 
 // do full-page navigation detection when the tab is updated
-// chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-//   if (tab.url === "about:blank") return;
-
-//   if (changeInfo.status === "complete" && tab.url && !tab.url.startsWith("chrome://")) {
-//     // chrome.storage.sync.get("isEnabled", (data) => {
-//     //   if (!data.isEnabled) return;
-//     // });
-
-//     if (tab.url.startsWith(chrome.runtime.getURL("extension/warning.html"))) {
-//       return;
-//     }
-
-//     // if (proceedURLs.has(tab.url)) {
-//     //   proceedURLs.delete(tab.url);
-//     //   return;
-//     // }
-
-//     let urlObj;
-//     try {
-//       urlObj = new URL(tab.url);
-//     } catch (e) {
-//       console.error("Invalid tab URL:", tab.url, e);
-//       return;
-//     }
-
-//     // If the user has chosen to continue accessing on the warning page, 
-//     // then this URL and all other pages on the same domain will be skipped
-//     if (proceedURLs.has(tab.url) || proceedHosts.has(urlObj.hostname)) {
-//       proceedURLs.delete(tab.url);
-//       console.log("Skip detection for user-approved site:", tab.url);
-//       return;
-//     }
-
-//     if (isSafeDomain(urlObj.hostname)) {
-//       console.log("Skip detection for whitelisted domain:", urlObj.hostname);
-//       return;
-//     }
-
-//     // multi-stage: notify the content script to show "checking..." overlay
-//     chrome.tabs.sendMessage(tabId, {
-//       action: "pageCheckStart",
-//       url: tab.url,
-//     });
-
-//     checkUrlWithBackend(tab.url)
-//       .then((data) => {
-//         console.log(
-//           "[navigation] Checked URL:",
-//           tab.url,
-//           "decision:",
-//           data.decision,
-//           "score:",
-//           data.score
-//         );
-
-//         chrome.tabs.sendMessage(tabId, {
-//           action: "pageCheckResult",
-//           url: tab.url,
-//           decision: data.decision,
-//           score: data.score,
-//         });
-
-//         if (data.decision === "PHISHING") {
-//           const warningPageUrl =
-//             chrome.runtime.getURL("extension/warning.html") +
-//             "?url=" +
-//             encodeURIComponent(tab.url);
-//           chrome.tabs.update(tabId, { url: warningPageUrl });
-//         }
-//       })
-//       .catch((error) => console.error("Error:", error));
-//   }
-// });
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (tab.url === "about:blank") return;
-  if (changeInfo.status !== "complete" || !tab.url || tab.url.startsWith("chrome://")) {
+  if (!tab.url || tab.url === "about:blank" || tab.url.startsWith("chrome://")) {
     return;
   }
 
-  // read the main switch once here
+  if (changeInfo.status !== "complete") {
+    return;
+  }
+
   chrome.storage.sync.get("isEnabled", (data) => {
     if (!data.isEnabled) {
       return;
@@ -250,7 +210,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       return;
     }
 
-    // the user clicked on "proceed" on the warning page, thus bypassing it directly
     if (proceedURLs.has(tab.url) || proceedHosts.has(urlObj.hostname)) {
       proceedURLs.delete(tab.url);
       console.log("Skip detection for user-approved site:", tab.url);
@@ -261,12 +220,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       console.log("Skip detection for whitelisted domain:", urlObj.hostname);
       return;
     }
-
-    // do the page detection
-    chrome.tabs.sendMessage(tabId, {
-      action: "pageCheckStart",
-      url: tab.url,
-    });
 
     checkUrlWithBackend(tab.url)
       .then((data) => {
@@ -279,12 +232,19 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
           data.score
         );
 
-        chrome.tabs.sendMessage(tabId, {
-          action: "pageCheckResult",
-          url: tab.url,
-          decision: data.decision,
-          score: data.score,
-        });
+        // Send the test results to the content.js of the current page
+        chrome.tabs.sendMessage(
+          tabId,
+          {
+            action: "pageCheckResult",
+            url: tab.url,
+            decision: data.decision,
+            score: data.score,
+          },
+          () => {
+            // If the content is not present, ignore lastError
+          }
+        );
 
         if (data.decision === "PHISHING") {
           const warningPageUrl =

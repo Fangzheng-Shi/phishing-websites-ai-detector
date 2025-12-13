@@ -3,6 +3,9 @@ const hoverTimers = new Map();
 // Checked URLs: key = full URL, value = { decision, score, reason }
 const cachedResults = new Map();
 
+// hover bubble threshold
+const HOVER_WARNING_THRESHOLD = 0.9; 
+
 // Give understandable prompts for different cases to help users see why a link looks suspicious.
 function promptReasonFromURL(href) {
   try {
@@ -123,49 +126,65 @@ function hidePhishingBubble(link) {
 
 // Send a detection request for a single link to the backend model.
 function requestCheck(link, rawUrl, source) {
-  try {
-    const href = rawUrl || link.href;
-    if (!href) return;
-
-    // Use cached result if available.
-    const cached = cachedResults.get(href);
-    if (cached) {
-      if (cached.decision === "PHISHING" && source === "hover") {
-        showPhishingBubble(link, cached.score, cached.reason);
+    try {
+      const href = rawUrl || link.href;
+      if (!href) return;
+  
+      // Use cached result if available.
+      const cached = cachedResults.get(href);
+      if (cached) {
+        const { decision, score, reason } = cached;
+  
+        if (source === "hover") {
+          // Even if the cache of hover shows "PHISHING", still check if the score exceeds the threshold
+          if (
+            decision === "PHISHING" &&
+            typeof score === "number" &&
+            score >= HOVER_WARNING_THRESHOLD
+          ) {
+            showPhishingBubble(link, score, reason);
+          }
+        }
+        // cache for both hover/click
+        return;
       }
-      // Whether PHISHING or SAFE, reuse the cached result and avoid a second request.
-      return;
-    }
-
-    chrome.runtime.sendMessage(
-      {
-        action: "checkLink",
-        url: href,
-        pageUrl: window.location.href,
-        source,
-      },
-      (response) => {
-        if (!response) return;
-
-        if (response.decision === "DISABLED") {
+  
+      chrome.runtime.sendMessage(
+        {
+          action: "checkLink",
+          url: href,
+          pageUrl: window.location.href,
+          source,
+        },
+        (response) => {
+          if (!response) return;
+  
+          if (response.decision === "DISABLED") {
             return;
+          }
+  
+          const decision = response.decision || "ERROR";
+          const score = response.score;
+          const reason = promptReasonFromURL(href);
+  
+          cachedResults.set(href, { decision, score, reason });
+  
+          if (source === "hover") {
+            // hover filter based on the threshold, and only display bubbles for "high-risk" cases
+            if (
+              decision === "PHISHING" &&
+              typeof score === "number" &&
+              score >= HOVER_WARNING_THRESHOLD
+            ) {
+              showPhishingBubble(link, score, reason);
+            }
+          }
         }
-
-        const decision = response.decision || "ERROR";
-        const score = response.score;
-        const reason = promptReasonFromURL(href);
-
-        cachedResults.set(href, { decision, score, reason });
-
-        if (decision === "PHISHING" && source === "hover") {
-          showPhishingBubble(link, score, reason);
-        }
-      }
-    );
-  } catch (e) {
-    console.error("requestCheck error:", e);
-  }
-}
+      );
+    } catch (e) {
+      console.error("requestCheck error:", e);
+    }
+  }  
 
 // full-page overlay for navigation detection
 let pageOverlay = null;
@@ -297,3 +316,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
 });
+
+// as soon as user enter the page, it asks whether the overplay should cover everything
+function initPageProtection() {
+    // Only protect the top-level page
+    if (window.top !== window) return;
+  
+    try {
+      chrome.runtime.sendMessage(
+        {
+          action: "navOverlayInit",
+          url: window.location.href,
+        },
+        (response) => {
+          if (!response || !response.shouldShow) {
+            return;
+          }
+
+          const show = () => showPageOverlay();
+  
+          if (!document.body || document.readyState === "loading") {
+            // Draw after DOMContentLoaded is completed
+            document.addEventListener("DOMContentLoaded", show, { once: true });
+          } else {
+            // dom is ready, just draw it
+            show();
+          }
+        }
+      );
+    } catch (e) {
+      console.error("navOverlayInit error:", e);
+    }
+  }
+  
+  // do it once
+  initPageProtection();
