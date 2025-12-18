@@ -5,7 +5,22 @@ import requests
 import socket
 from bs4 import BeautifulSoup
 import tldextract
-from datetime import datetime
+from datetime import datetime, timezone
+
+def _pick_date(d):
+    if d is None:
+        return None
+    if isinstance(d, list):
+        d = min([x for x in d if x is not None], default=None)
+    return d
+
+def _to_utc_aware(d):
+    d = _pick_date(d)
+    if d is None:
+        return None
+    if getattr(d, "tzinfo", None) is None:
+        return d.replace(tzinfo=timezone.utc)
+    return d.astimezone(timezone.utc)
 
 def length_url(url):
     return len(url)
@@ -614,31 +629,69 @@ def whois_registered_domain(url):
         print(f"Error fetching WHOIS information: {e}")
         return 0
 
-def domain_registration_length(url):
-    try:
-        domain = urlparse(url).hostname
-        whois_info = whois.whois(domain)
-        expiration_date = whois_info.expiration_date
-        if isinstance(expiration_date, list):
-            expiration_date = min(expiration_date)
-        registration_length = (expiration_date - whois_info.creation_date).days
-        return registration_length
-    except Exception as e:
-        print(f"Error fetching domain registration length: {e}")
-        return 0
+# def domain_registration_length(url):
+#     try:
+#         domain = urlparse(url).hostname
+#         whois_info = whois.whois(domain)
+#         expiration_date = whois_info.expiration_date
+#         if isinstance(expiration_date, list):
+#             expiration_date = min(expiration_date)
+#         registration_length = (expiration_date - whois_info.creation_date).days
+#         return registration_length
+#     except Exception as e:
+#         print(f"Error fetching domain registration length: {e}")
+#         return 0
 
+# def domain_age(url):
+#     try:
+#         domain = urlparse(url).hostname
+#         whois_info = whois.whois(domain)
+#         creation_date = whois_info.creation_date
+#         if isinstance(creation_date, list):
+#             creation_date = min(creation_date)
+#         age = (datetime.now() - creation_date).days
+#         return age
+#     except Exception as e:
+#         print(f"Error fetching domain age: {e}")
+#         return 0
 def domain_age(url):
     try:
         domain = urlparse(url).hostname
         whois_info = whois.whois(domain)
-        creation_date = whois_info.creation_date
-        if isinstance(creation_date, list):
-            creation_date = min(creation_date)
-        age = (datetime.now() - creation_date).days
-        return age
+        creation_date = _norm_whois_dt(whois_info.creation_date)
+        if not creation_date:
+            return 0
+        now = datetime.now(timezone.utc)
+        return max(0, (now - creation_date).days)
     except Exception as e:
         print(f"Error fetching domain age: {e}")
         return 0
+
+
+def domain_registration_length(url):
+    try:
+        domain = urlparse(url).hostname
+        whois_info = whois.whois(domain)
+        creation_date = _norm_whois_dt(whois_info.creation_date)
+        expiration_date = _norm_whois_dt(whois_info.expiration_date)
+        if not creation_date or not expiration_date:
+            return 0
+        return max(0, (expiration_date - creation_date).days)
+    except Exception as e:
+        print(f"Error fetching domain registration length: {e}")
+        return 0
+
+def _norm_whois_dt(x):
+    # whois 可能返回 list / None / datetime
+    if isinstance(x, list):
+        x = next((d for d in x if d), None)
+    if not isinstance(x, datetime):
+        return None
+    # 统一成 UTC aware datetime
+    if x.tzinfo is None:
+        return x.replace(tzinfo=timezone.utc)
+    return x.astimezone(timezone.utc)
+
 
 def google_index(url):
     try:

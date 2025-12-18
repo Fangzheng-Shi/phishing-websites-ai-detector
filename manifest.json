@@ -7,8 +7,10 @@
     "tabs",
     "webNavigation",
     "activeTab",
-    "storage",
-    "http://127.0.0.1:5030"
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:5030/*"
   ],
   "background": {
     "service_worker": "extension/background.js"

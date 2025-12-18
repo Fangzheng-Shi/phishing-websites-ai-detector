@@ -8,9 +8,25 @@ import whois
 import os
 import time
 import re
-from datetime import datetime
 from urllib.parse import urlparse
 from requests.exceptions import RequestException
+from datetime import datetime, timezone
+
+def _pick_date(d):
+    if d is None:
+        return None
+    if isinstance(d, list):
+        d = min([x for x in d if x is not None], default=None)
+    return d
+
+def _to_utc_aware(d):
+    d = _pick_date(d)
+    if d is None:
+        return None
+    if getattr(d, "tzinfo", None) is None:
+        return d.replace(tzinfo=timezone.utc)
+    return d.astimezone(timezone.utc)
+
 
 
 def qty_dot_url(url):
@@ -412,41 +428,66 @@ def domain_spf(url):
         print(f"An error occurred in DNS query: {e}")
         return False
 
+# def get_domain_activation_time(url):
+#     domain = urlparse(url).netloc
+    
+#     try:
+#         w = whois.whois(domain)
+#         if w.creation_date:
+#             if isinstance(w.creation_date, list):
+#                 creation_date = w.creation_date[0]
+#             else:
+#                 creation_date = w.creation_date
+#             domain_age = (datetime.now() - creation_date).days
+#             return domain_age
+#         else:
+#             return None
+#     except Exception as e:
+#         print(f"Error retrieving domain activation time: {e}")
+#         return None
+
+# def get_domain_expiration_time(url):
+#     domain = urlparse(url).netloc
+    
+#     try:
+#         w = whois.whois(domain)
+#         if w.expiration_date:
+#             if isinstance(w.expiration_date, list):
+#                 expiration_date = w.expiration_date[0]
+#             else:
+#                 expiration_date = w.expiration_date
+#             days_until_expiration = (expiration_date - datetime.now()).days
+#             return days_until_expiration
+#         else:
+#             return None
+#     except Exception as e:
+#         print(f"Error retrieving domain expiration time: {e}")
+#         return None
+
 def get_domain_activation_time(url):
     domain = urlparse(url).netloc
-    
     try:
         w = whois.whois(domain)
-        if w.creation_date:
-            if isinstance(w.creation_date, list):
-                creation_date = w.creation_date[0]
-            else:
-                creation_date = w.creation_date
-            domain_age = (datetime.now() - creation_date).days
-            return domain_age
-        else:
+        creation_date = _to_utc_aware(w.creation_date)
+        if not creation_date:
             return None
+        return (datetime.now(timezone.utc) - creation_date).days
     except Exception as e:
         print(f"Error retrieving domain activation time: {e}")
         return None
 
 def get_domain_expiration_time(url):
     domain = urlparse(url).netloc
-    
     try:
         w = whois.whois(domain)
-        if w.expiration_date:
-            if isinstance(w.expiration_date, list):
-                expiration_date = w.expiration_date[0]
-            else:
-                expiration_date = w.expiration_date
-            days_until_expiration = (expiration_date - datetime.now()).days
-            return days_until_expiration
-        else:
+        expiration_date = _to_utc_aware(w.expiration_date)
+        if not expiration_date:
             return None
+        return (expiration_date - datetime.now(timezone.utc)).days
     except Exception as e:
         print(f"Error retrieving domain expiration time: {e}")
         return None
+
 
 def qty_ip_resolved(url):
     domain = urlparse(url).netloc
